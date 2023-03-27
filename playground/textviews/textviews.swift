@@ -2,6 +2,7 @@ import Foundation
 import AppKit
 import CoreGraphics
 import ApplicationServices
+import Accessibility
 
 // Function to request accessibility permissions
 func requestAccessibilityPermissions() {
@@ -49,12 +50,87 @@ func fetchFocusedTextViewContent() {
     }
 }
 
+func findTextViewInElement(_ element: AXUIElement) -> AXUIElement? {
+    var children: CFArray?
+    
+    let error = withUnsafeMutablePointer(to: &children) { (ptr) -> AXError in
+        ptr.withMemoryRebound(to: Optional<CFTypeRef>.self, capacity: 1) {
+            AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, $0)
+        }
+    }
+    
+    if error == .success, let childrenArray = children as? [AXUIElement] {
+        for child in childrenArray {
+            var role: AnyObject?
+            AXUIElementCopyAttributeValue(child, kAXRoleAttribute as CFString, &role)
+            if let roleString = role as? String, (roleString == "AXTextArea" || roleString == "AXTextField") {
+                return child
+            } else {
+                if let textView = findTextViewInElement(child) {
+                    return textView
+                }
+            }
+        }
+    }
+    return nil
+}
+
+func fetchFocusedTextViewContentWithMarkup() {
+    let frontmostApp = NSWorkspace.shared.frontmostApplication
+    guard let app = frontmostApp else {
+        print("Failed to fetch the focused application")
+        return
+    }
+    
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    if let textViewElement = findTextViewInElement(appElement) {
+        var attributedString: AnyObject?
+        let rangeValue = NSValue(range: NSRange(location: 0, length: -1))
+        let errorAttrString = AXUIElementCopyParameterizedAttributeValue(textViewElement, NSAccessibility.ParameterizedAttribute.attributedStringForRange.rawValue as CFString, rangeValue, &attributedString)
+        
+        if case .success = errorAttrString, let attrString = attributedString as? NSAttributedString {
+            print("Focused text view content with markup: \(attrString.string)")
+        } else {
+            print("Could not fetch focused text view content with markup.")
+        }
+    } else {
+        print("Failed to find the text view in the focused application")
+    }
+}
+
+func fetchFocusedTextViewSelectedContentWithMarkup() {
+    let frontmostApp = NSWorkspace.shared.frontmostApplication
+    guard let app = frontmostApp else {
+        print("Failed to fetch the focused application")
+        return
+    }
+    
+    let appElement = AXUIElementCreateApplication(app.processIdentifier)
+    var focusedElement: AnyObject?
+    let errorElement = AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedElement)
+    
+    if case .success = errorElement, let element = focusedElement, CFGetTypeID(element) == AXUIElementGetTypeID() {
+        var selectedText: AnyObject?
+        let errorSelectedText = AXUIElementCopyAttributeValue(element as! AXUIElement, kAXSelectedTextAttribute as CFString, &selectedText)
+        
+        if case .success = errorSelectedText, let text = selectedText as? String {
+            print("Focused text view selected text with markup: \(text)")
+        } else {
+            print("Could not fetch focused text view selected text with markup.")
+        }
+    } else {
+        print("Failed to fetch the focused UI element")
+    }
+}
+
 // Request accessibility permissions
 requestAccessibilityPermissions()
 
 // Check focused text view content every second
 let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
     fetchFocusedTextViewContent()
+    fetchFocusedTextViewContentWithMarkup()
+    fetchFocusedTextViewSelectedContentWithMarkup()
 }
 
 // Add signal handler for SIGINT
