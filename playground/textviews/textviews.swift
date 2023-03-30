@@ -24,6 +24,40 @@ func requestAccessibilityPermissions() {
     }
 }
 
+func checkNotesAppPermissions() -> Bool {
+    let appleScript = """
+    tell application "Notes"
+        get version
+    end tell
+    """
+
+    var error: NSDictionary?
+    if let scriptObject = NSAppleScript(source: appleScript) {
+        if scriptObject.executeAndReturnError(&error) != nil {
+            return true
+        } else {
+            print("Could not access the Notes app using AppleScript.")
+            if let errorDict = error {
+                print("Error: \(errorDict)")
+            }
+        }
+    } else {
+        print("Failed to create AppleScript object.")
+    }
+
+    // Instructions for granting permissions
+    print("""
+    To grant permissions:
+    1. Open System Preferences
+    2. Go to Security & Privacy
+    3. Click on the Privacy tab
+    4. In the sidebar, click on Automation
+    5. Find your app in the list and check the box next to Notes
+    """)
+
+    return false
+}
+
 // Function to fetch the content of the focused text view element
 func fetchFocusedTextViewContent() {
     let frontmostApp = NSWorkspace.shared.frontmostApplication
@@ -84,14 +118,36 @@ func fetchFocusedTextViewContentWithMarkup() {
     
     let appElement = AXUIElementCreateApplication(app.processIdentifier)
     if let textViewElement = findTextViewInElement(appElement) {
-        var attributedString: AnyObject?
-        let rangeValue = NSValue(range: NSRange(location: 0, length: -1))
-        let errorAttrString = AXUIElementCopyParameterizedAttributeValue(textViewElement, NSAccessibility.ParameterizedAttribute.attributedStringForRange.rawValue as CFString, rangeValue, &attributedString)
+        var textValue: AnyObject?
+        let errorText = AXUIElementCopyAttributeValue(textViewElement, kAXValueAttribute as CFString, &textValue)
         
-        if case .success = errorAttrString, let attrString = attributedString as? NSAttributedString {
-            print("Focused text view content with markup: \(attrString.string)")
+        if case .success = errorText, let text = textValue as? String {
+            var range = NSRange(location: 0, length: text.count)
+            let rangeValue = AXValueCreate(AXValueType(rawValue: kAXValueCFRangeType)!, &range)
+            
+            if let unwrappedRangeValue = rangeValue { // Safely unwrap the rangeValue optional
+                var attributedString: AnyObject?
+                let errorAttrString = AXUIElementCopyParameterizedAttributeValue(textViewElement, kAXAttributedStringForRangeParameterizedAttribute as CFString, unwrappedRangeValue, &attributedString)
+                
+                if case .success = errorAttrString, let attrString = attributedString as? NSAttributedString {
+    let documentAttributes: [NSAttributedString.DocumentAttributeKey: Any] = [
+        .documentType: NSAttributedString.DocumentType.html,
+        .characterEncoding: String.Encoding.utf8.rawValue
+    ]
+    if let htmlData = try? attrString.data(from: NSRange(location: 0, length: attrString.length), documentAttributes: documentAttributes),
+       let htmlString = String(data: htmlData, encoding: .utf8) {
+        print("Focused text view content with markup (HTML): \(htmlString)")
+    } else {
+        print("Failed to convert attributed string to HTML.")
+    }
+} else {
+    print("Could not fetch focused text view content with markup.")
+}
+            } else {
+                print("Could not create range value.")
+            }
         } else {
-            print("Could not fetch focused text view content with markup.")
+            print("Could not fetch focused text view content.")
         }
     } else {
         print("Failed to find the text view in the focused application")
@@ -125,6 +181,7 @@ func fetchFocusedTextViewSelectedContentWithMarkup() {
 
 // Request accessibility permissions
 requestAccessibilityPermissions()
+checkNotesAppPermissions()
 
 // Check focused text view content every second
 let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
