@@ -12,19 +12,29 @@ struct SSEStream: AsyncSequence {
 }
 
 final class URLSessionIterator: NSObject, AsyncIteratorProtocol, URLSessionDataDelegate, URLSessionTaskDelegate, URLSessionDelegate {
-    let urlRequest: URLRequest
+    var urlRequest: URLRequest
     var buffer: String = ""
-    let task: URLSessionDataTask
+    var task: URLSessionDataTask!
     var continuation: CheckedContinuation<Element, Never>?
+    var isCompleted: Bool = false
+    private var session: URLSession!
+
+
+    typealias Element = Result<String, Error>
 
     init(urlRequest: URLRequest) {
         self.urlRequest = urlRequest
-        let session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
+        super.init()
+        self.session = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
         self.task = session.dataTask(with: urlRequest)
     }
 
     func next() async -> Element? {
-        await withOptionalCheckedContinuation { continuation in
+        if isCompleted {
+            return nil 
+        }
+        
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Element, Never>) in
             self.continuation = continuation
             self.task.resume()
         }
@@ -32,9 +42,9 @@ final class URLSessionIterator: NSObject, AsyncIteratorProtocol, URLSessionDataD
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         if let error = error {
-            continuation?.resume(throwing: error)
+            continuation?.resume(returning: .failure(error))
         } else {
-            continuation?.resume(returning: nil)
+            isCompleted = true
         }
     }
 
@@ -46,15 +56,19 @@ final class URLSessionIterator: NSObject, AsyncIteratorProtocol, URLSessionDataD
             continuation?.resume(returning: .success(event))
         }
     }
+
+    deinit {
+        session.finishTasksAndInvalidate()
+    }
 }
 
 private func extractEvent(_ string: String) -> (String, String)? {
     if let range = string.range(of: "\n\n") {
-            let event = String(string[string.startIndex..<range.lowerBound])
-            let remaining = String(string[range.upperBound...])
-            return (event, remaining)
-        }
-        return nil
+        let event = String(string[string.startIndex..<range.lowerBound])
+        let remaining = String(string[range.upperBound...])
+        return (event, remaining)
+    }
+    return nil
 }
 
 func sseEvents(for request: URLRequest) -> SSEStream {
@@ -63,24 +77,33 @@ func sseEvents(for request: URLRequest) -> SSEStream {
 
 // Example usage:
 
-let url = URL(string: "https://example.com/sse")!
+let url = URL(string: "http://localhost:8000/api/stream_test")!
 let request = URLRequest(url: url)
 
 let sseStream = sseEvents(for: request)
 
 Task {
-    do {
-        for try await result in sseStream {
-            switch result {
-            case .success(let event):
-                print("Received event: \(event)")
-            case .failure(let error):
-                print("Error: \(error)")
-            }
+    for try await result in sseStream {
+        switch result {
+        case .success(let event):
+            print("Received event: \(event)")
+        case .failure(let error):
+            print("Error: \(error)")
         }
-    } catch {
-        print("Caught error: \(error)")
     }
+
+    print("Stream completed")
 }
 
-RunLoop.main.run()
+// Add signal handler for SIGINT
+var signalInterrupt = false
+let signalHandler: @convention(c) (Int32) -> Void = { _ in
+    signalInterrupt = true
+    CFRunLoopStop(CFRunLoopGetCurrent())
+}
+signal(SIGINT, signalHandler)
+
+// Run the main run loop until a signal interrupt occurs
+while !signalInterrupt {
+    RunLoop.current.run(mode: .default, before: .distantFuture)
+}
