@@ -9,6 +9,8 @@ ShortcutAI is a Swift package that provides a set of utilities for building keyb
 - Fetching the content of the currently focused text view
 - Listening for global key events
 - Performing custom actions when specific key sequences are detected
+- Detecting custom key sequences
+- Handle streaming responses from the ShortcutAI API
 
 ## Usage
 
