@@ -3,7 +3,7 @@ import Foundation
 struct SSEStream: AsyncSequence {
     let urlRequest: URLRequest
 
-    typealias Element = Result<String, Error>
+    typealias Element = Result<String, Error>?
     typealias AsyncIterator = URLSessionIterator
 
     func makeAsyncIterator() -> URLSessionIterator {
@@ -20,7 +20,7 @@ final class URLSessionIterator: NSObject, AsyncIteratorProtocol, URLSessionDataD
     private var session: URLSession!
 
 
-    typealias Element = Result<String, Error>
+    typealias Element = Result<String, Error>?
 
     init(urlRequest: URLRequest) {
         self.urlRequest = urlRequest
@@ -35,8 +35,12 @@ final class URLSessionIterator: NSObject, AsyncIteratorProtocol, URLSessionDataD
         }
         
         return await withCheckedContinuation { (continuation: CheckedContinuation<Element, Never>) in
-            self.continuation = continuation
-            self.task.resume()
+            if self.isCompleted {
+                continuation.resume(returning: nil)
+            } else {
+                self.continuation = continuation
+                self.task.resume()
+            }
         }
     }
 
@@ -45,6 +49,7 @@ final class URLSessionIterator: NSObject, AsyncIteratorProtocol, URLSessionDataD
             continuation?.resume(returning: .failure(error))
         } else {
             isCompleted = true
+            continuation?.resume(returning: nil) // Indicate the end of the stream
         }
     }
 
@@ -89,6 +94,8 @@ Task {
             print("Received event: \(event)")
         case .failure(let error):
             print("Error: \(error)")
+        case .none:
+            print("None")
         }
     }
 
